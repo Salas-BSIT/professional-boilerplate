@@ -3,72 +3,74 @@ import express from 'express';
 import { config } from './config/env';
 import { AppDataSource } from './config/data-source';
 import { logger } from './utils/logger';
-import { 
-    helmetMiddleware, 
-    corsMiddleware, 
-    apiLimiter 
+import {
+    helmetMiddleware,
+    corsMiddleware,
+    apiLimiter
 } from './middleware/security';
 import { requestLoggingMiddleware } from './middleware/requestLogger';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler';
+
+// Import routes
 import { userRoutes } from './routes/userRoutes';
 import { healthRoutes } from './routes/healthRoutes';
+import { authRoutes } from './routes/authRoutes'; // <- Add this
 
 const app = express();
 
 app.set('trust proxy', 1);
+
 app.use(helmetMiddleware);
 app.use(corsMiddleware);
-app.use(express.json({ limit: '10kb' }));
+app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
-app.use('/api/', apiLimiter);
+app.use('/api', apiLimiter);
 app.use(requestLoggingMiddleware);
 
+// Register routes
 app.use('/health', healthRoutes);
+app.use('/api/auth', authRoutes); // <- Add this
 app.use('/api/users', userRoutes);
 
 app.use(notFoundHandler);
 app.use(errorHandler);
 
-const startServer = async () => {
+const startServer = async (): Promise<void> => {
     try {
         await AppDataSource.initialize();
-        logger.info('Database connected successfully');
-        
-        if (config.isProd) {
-            await AppDataSource.runMigrations();
-            logger.info('Migrations executed');
-        }
-        
+        logger.info('Database connection established');
+
         const server = app.listen(config.port, () => {
-            logger.info(`Server running on port ${config.port}`);
-            logger.info(`Environment: ${config.env}`);
-            logger.info(`Healthcheck: http://localhost:${config.port}/health`);
+            logger.info(`Server is running on port ${config.port}`);
         });
-        
-        const gracefulShutdown = async (signal: string) => {
-            logger.info(`${signal} received. Starting graceful shutdown...`);
-            
-            server.close(async () => {
-                logger.info('HTTP server closed');
-                await AppDataSource.destroy();
-                logger.info('Database connection closed');
-                logger.info('Graceful shutdown complete');
-                process.exit(0);
+
+        const shutdown = async (signal: string): Promise<void> => {
+            logger.info(`${signal} received. Shutting down gracefully.`);
+            server.close(async (serverError) => {
+                if (serverError) {
+                    logger.error('HTTP server shutdown failed', { error: serverError });
+                    process.exitCode = 1;
+                }
+                try {
+                    if (AppDataSource.isInitialized) {
+                        await AppDataSource.destroy();
+                    }
+                } catch (databaseError) {
+                    logger.error('Database shutdown failed', { error: databaseError });
+                    process.exitCode = 1;
+                }
             });
-            
-            setTimeout(() => {
-                logger.error('Forced shutdown due to timeout');
-                process.exit(1);
-            }, 10000);
         };
-        
-        process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
-        process.on('SIGINT', () => gracefulShutdown('SIGINT'));
-        
+
+        process.once('SIGINT', () => void shutdown('SIGINT'));
+        process.once('SIGTERM', () => void shutdown('SIGTERM'));
     } catch (error) {
-        logger.error('Failed to start server:', error);
+        logger.error('Application startup failed', { error });
+        if (AppDataSource.isInitialized) {
+            await AppDataSource.destroy();
+        }
         process.exit(1);
     }
 };
 
-startServer();
+void startServer();

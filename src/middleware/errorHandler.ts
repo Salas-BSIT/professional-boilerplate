@@ -59,7 +59,6 @@ export const errorHandler = (
             code: errorCode,
             message,
             ...(details && { details }),
-            ...(process.env.NODE_ENV === 'development' && { stack: err.stack }),
         },
     });
 };

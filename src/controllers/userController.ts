@@ -7,7 +7,7 @@ const logger = createLogger('UserController');
 
 export class UserController {
     static async getAll(req: Request, res: Response) {
-        const { page = 1, limit = 10, sort = 'createdAt', order = 'DESC' } = req.query;
+        const { page = 1, limit = 10, sort = 'createdAt', order = 'DESC' } = res.locals.validatedQuery ?? req.query;
         
         const [users, total] = await UserService.findAll({
             page: Number(page),
